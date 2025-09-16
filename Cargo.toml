@@ -1,0 +1,22 @@
+[workspace]
+members = ["beaver-bootstrap", "beaver-example"]
+resolver = "2"
+edition = "2024"
+
+[workspace.dependencies]
+
+# error handling
+anyhow = "1.0.99"
+thiserror = "2.0.16"
+
+# builder pattern
+typed-builder = "0.22.0"
+
+# logging
+tracing = "0.1.37"
+tracing-subscriber = "0.3.20"
+# dependency injection 
+rudi = "0.8.3"
+
+# test
+rstest = "0.26.1"
