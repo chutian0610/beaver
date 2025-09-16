@@ -10,14 +10,18 @@ pub struct Bootstrap {
 
 impl Bootstrap {
     pub fn initialize(&self) -> Result<(), BootstrapError> {
+        self.initialize_config()?;
         self.initialize_logging()?;
+        Ok(())
+    }
+
+    pub fn initialize_config(&self) -> Result<(), BootstrapError> {
         Ok(())
     }
 
     pub fn initialize_logging(&self) -> Result<(), BootstrapError> {
         if self.initialize_logging {
             tracing_subscriber::fmt().init();
-            info!("logging initialized success");
         }
         Ok(())
     }
