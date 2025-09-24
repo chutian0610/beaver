@@ -9,7 +9,7 @@ thiserror = { workspace = true }
 typed-builder = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-rudi = { workspace = true }
+more-di = { workspace = true, features = ["builder", "inject"] }
 
 [dev-dependencies]
 rstest = { workspace = true }

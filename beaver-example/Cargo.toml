@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 beaver-bootstrap = { path = "../beaver-bootstrap" }
+tracing = { workspace = true }
