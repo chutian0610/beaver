@@ -33,13 +33,11 @@ impl Config {
         Self { inner }
     }
 
-    pub fn load() -> Result<Self, ConfigError> {
-        Self::from_folder(DEFAULT_CONFIG_FOLDER.as_path())
+    pub fn load(env_config_prefix: Option<&str>) -> Result<Self, ConfigError> {
+        Self::from_folder(DEFAULT_CONFIG_FOLDER.as_path(), env_config_prefix)
     }
-    pub fn from_folder(path: &Path) -> Result<Self, ConfigError> {
+    pub fn from_folder(path: &Path, env_config_prefix: Option<&str>) -> Result<Self, ConfigError> {
         let cfg = path.join("config.toml");
-
-        let env = config::Environment::default().separator("_");
         let mut builder = config::Config::builder();
 
         if cfg.exists() {
@@ -48,7 +46,12 @@ impl Config {
             tracing::warn!("not found config `{}`", cfg.display());
         }
         // add environment variables to config
-        let config = builder.add_source(env).build()?;
+        if let Some(prefix) = env_config_prefix {
+            builder = builder.add_source(config::Environment::with_prefix(prefix).separator("_"));
+        } else {
+            builder = builder.add_source(config::Environment::default().separator("_"));
+        }
+        let config = builder.build()?;
 
         Ok(Self { inner: config })
     }

@@ -11,6 +11,10 @@ pub struct Bootstrap {
     #[builder(default = false)]
     show_config: bool,
 
+    /// Prefix of environment variables to override config values.
+    #[builder(default = Some("BEAVER_".to_string()))]
+    env_config_prefix: Option<String>,
+
     /// a collection of registered services.
     ///
     /// This field is initialized internally.
@@ -40,7 +44,9 @@ impl Bootstrap {
     }
 
     pub fn initialize_config(&mut self) -> Result<(), BootstrapError> {
-        let config = Config::load().map_err(|e| BootstrapError::ConfigLoadError(e))?;
+        let env_config_prefix: Option<&str> = self.env_config_prefix.as_deref();
+        let config =
+            Config::load(env_config_prefix).map_err(|e| BootstrapError::ConfigLoadError(e))?;
         let _ = self.base_modules.config.insert(Ref::new(config));
         Ok(())
     }
