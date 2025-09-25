@@ -33,10 +33,21 @@ impl Config {
         Self { inner }
     }
 
-    pub fn load(env_config_prefix: Option<&str>) -> Result<Self, ConfigError> {
-        Self::from_folder(DEFAULT_CONFIG_FOLDER.as_path(), env_config_prefix)
+    pub fn load(
+        env_config_prefix: Option<&str>,
+        env_config_split: &str,
+    ) -> Result<Self, ConfigError> {
+        Self::from_folder(
+            DEFAULT_CONFIG_FOLDER.as_path(),
+            env_config_prefix,
+            env_config_split,
+        )
     }
-    pub fn from_folder(path: &Path, env_config_prefix: Option<&str>) -> Result<Self, ConfigError> {
+    pub fn from_folder(
+        path: &Path,
+        env_config_prefix: Option<&str>,
+        env_config_split: &str,
+    ) -> Result<Self, ConfigError> {
         let cfg = path.join("config.toml");
         let mut builder = config::Config::builder();
 
@@ -47,9 +58,11 @@ impl Config {
         }
         // add environment variables to config
         if let Some(prefix) = env_config_prefix {
-            builder = builder.add_source(config::Environment::with_prefix(prefix).separator("_"));
+            builder = builder
+                .add_source(config::Environment::with_prefix(prefix).separator(env_config_split));
         } else {
-            builder = builder.add_source(config::Environment::default().separator("_"));
+            builder =
+                builder.add_source(config::Environment::default().separator(env_config_split));
         }
         let config = builder.build()?;
 
