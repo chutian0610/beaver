@@ -1,5 +1,7 @@
+use std::cell::RefCell;
+
 use crate::{config::Config, error::BootstrapError};
-use di::{Ref, ServiceCollection, singleton_as_self};
+use di::{Ref, RefMut, ServiceCollection, singleton_as_self};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use typed_builder::TypedBuilder;
 
@@ -42,12 +44,12 @@ pub struct Bootstrap {
     modules: Vec<Box<dyn Module>>,
 
     /// a collection of modules
-    #[builder(default = BaseModule::default())]
-    base_modules: BaseModule,
+    #[builder(default = RefCell::new(BaseModule::default()))]
+    base_modules: RefCell<BaseModule>,
 }
 
 impl Bootstrap {
-    pub fn initialize(&mut self) -> Result<(), BootstrapError> {
+    pub fn initialize(&self) -> Result<(), BootstrapError> {
         // first we try to initialize config
         self.initialize_config()?;
         // then we try to initialize logging by logger config
@@ -59,12 +61,16 @@ impl Bootstrap {
         Ok(())
     }
 
-    pub fn initialize_config(&mut self) -> Result<(), BootstrapError> {
+    pub fn initialize_config(&self) -> Result<(), BootstrapError> {
         let env_config_prefix: Option<&str> = self.env_config_prefix.as_deref();
         let env_config_split: &str = self.env_config_split.as_str();
         let config = Config::load(env_config_prefix, env_config_split)
             .map_err(|e| BootstrapError::ConfigLoadError(e))?;
-        let _ = self.base_modules.config.insert(Ref::new(config));
+        let _ = self
+            .base_modules
+            .borrow_mut()
+            .config
+            .insert(Ref::new(config));
         Ok(())
     }
 
@@ -84,7 +90,7 @@ impl Bootstrap {
     }
 
     pub fn print_config(&self) -> Result<(), BootstrapError> {
-        if let Some(config) = &self.base_modules.config {
+        if let Some(config) = &self.base_modules.borrow().config {
             let properties = config
                 .to_properties()
                 .map_err(|e| BootstrapError::ConfigPrintError(e))?;

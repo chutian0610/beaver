@@ -9,6 +9,17 @@ use config::{ConfigError, File, ValueKind};
 use di::injectable;
 use serde::Deserialize;
 
+/// Config is the configuration of the application.
+///
+/// It is loaded from the `config.toml` file in the `etc` folder of the application.
+///
+/// # Example
+/// ```
+/// use beaver_bootstrap::config::Config;
+/// let config = Config::load(None, "_").unwrap();
+/// let port = config.get::<PortConfig>().unwrap().port;
+/// ```
+///
 #[derive(Clone)]
 #[injectable]
 pub struct Config {
@@ -93,15 +104,28 @@ impl Config {
     }
 }
 
+/// ConfigPrefix is a trait that is used to identify the prefix of a configuration.
+///
+/// # Example
+/// ```
+/// use beaver_bootstrap::config::ConfigPrefix;
+/// #[derive(Deserialize)]
+/// struct PortConfig {
+///     port: u16,
+/// }
+/// impl ConfigPrefix for PortConfig {
+///     const PREFIX: &'static str = "port";
+/// }
+/// ```
 pub trait ConfigPrefix {
     const PREFIX: &'static str;
 }
 
-pub struct Properties {
+pub(crate) struct Properties {
     properties: HashMap<String, String>,
 }
 
-pub struct PropertiesConfig {
+pub(crate) struct PropertiesConfig {
     array_split: bool,
     separator: char,
 }
@@ -187,15 +211,6 @@ impl Properties {
                 }
             }
         }
-    }
-    pub fn to_properties(&self) -> String {
-        let mut lines: Vec<String> = Vec::new();
-
-        for (key, value) in &self.properties {
-            lines.push(format!("{} = {}", key, value));
-        }
-        lines.sort();
-        lines.join("\n")
     }
     pub fn get_properties(&self) -> &HashMap<String, String> {
         &self.properties
