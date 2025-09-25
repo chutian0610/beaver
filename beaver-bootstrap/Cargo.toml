@@ -10,6 +10,8 @@ typed-builder = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 more-di = { workspace = true, features = ["builder", "inject"] }
+config = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 rstest = { workspace = true }
