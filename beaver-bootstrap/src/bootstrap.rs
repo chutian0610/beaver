@@ -2,6 +2,19 @@ use crate::{config::Config, error::BootstrapError};
 use di::{Ref, ServiceCollection, singleton_as_self};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use typed_builder::TypedBuilder;
+
+/// Bootstrap is the entry point of the application.
+///
+/// It is responsible for initializing the application, including loading the configuration,
+/// initializing the logging, and initializing the service collection.
+///
+/// # Example
+/// ```
+/// use beaver_bootstrap::Bootstrap;
+/// let bootstrap = Bootstrap::builder().build();
+/// bootstrap.initialize().unwrap();
+/// ```
+///
 #[derive(TypedBuilder)]
 pub struct Bootstrap {
     /// Whether need to initialize logging.
@@ -84,6 +97,10 @@ impl Bootstrap {
 }
 
 /// a module used for di configuration.
+///
+/// # Description
+///
+/// A module is a collection of services that can be registered with the service collection.
 ///
 /// # Example
 /// ```
