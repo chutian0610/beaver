@@ -7,6 +7,6 @@ pub enum BootstrapError {
     TracingSubscriberInitError(#[from] Box<dyn std::error::Error>),
     #[error("unable to load config: {0}")]
     ConfigLoadError(ConfigError),
-    #[error("unable to print config: {0}")]
-    ConfigPrintError(ConfigError),
+    #[error("unable to show config: {0}")]
+    ConfigShowError(ConfigError),
 }

@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use crate::{config::Config, error::BootstrapError};
-use di::{Ref, RefMut, ServiceCollection, singleton_as_self};
+use di::{Ref, ServiceCollection, singleton_as_self};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use typed_builder::TypedBuilder;
 
@@ -55,8 +55,8 @@ impl Bootstrap {
         // then we try to initialize logging by logger config
         self.initialize_logging()?;
         if self.show_config {
-            // after logging initialized, we print config if needed
-            self.print_config()?;
+            // after logging initialized, we show config if needed
+            self.show_config()?;
         }
         Ok(())
     }
@@ -89,11 +89,11 @@ impl Bootstrap {
         Ok(())
     }
 
-    pub fn print_config(&self) -> Result<(), BootstrapError> {
+    pub fn show_config(&self) -> Result<(), BootstrapError> {
         if let Some(config) = &self.base_modules.borrow().config {
             let properties = config
                 .to_properties()
-                .map_err(|e| BootstrapError::ConfigPrintError(e))?;
+                .map_err(|e| BootstrapError::ConfigShowError(e))?;
             for (key, value) in properties.get_properties() {
                 tracing::info!("load config {}={}", key, value);
             }
