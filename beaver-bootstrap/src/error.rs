@@ -9,4 +9,6 @@ pub enum BootstrapError {
     ConfigLoadError(ConfigError),
     #[error("unable to show config: {0}")]
     ConfigShowError(ConfigError),
+    #[error("invalid config value: {0}")]
+    InvalidConfigValueError(String),
 }

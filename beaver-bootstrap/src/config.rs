@@ -10,8 +10,8 @@ use di::injectable;
 use serde::Deserialize;
 
 static DEFAULT_CONFIG_FOLDER: LazyLock<PathBuf> = LazyLock::new(|| {
-    let mut root_path = match env::var("CARGO_MANIFEST_DIR") {
-        Ok(dir) => PathBuf::from(dir),
+    match env::var("CARGO_MANIFEST_DIR") {
+        Ok(dir) => PathBuf::from(dir).join("etc"),
         Err(_) => {
             match env::var("BEAVER_CONFIG") {
                 Ok(dir) => PathBuf::from(dir), // get config path from env
@@ -25,9 +25,7 @@ static DEFAULT_CONFIG_FOLDER: LazyLock<PathBuf> = LazyLock::new(|| {
                 }
             }
         }
-    };
-    root_path.push("etc");
-    root_path
+    }
 });
 
 /// Config is the configuration of the application.

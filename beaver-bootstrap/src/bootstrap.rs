@@ -1,8 +1,16 @@
 use std::cell::RefCell;
 
-use crate::{config::Config, error::BootstrapError};
+use crate::{
+    config::Config,
+    error::BootstrapError,
+    log::{Logger, LoggingConfig},
+};
 use di::{Ref, ServiceCollection, singleton_as_self};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_rolling_file::RollingFileAppenderBase;
+use tracing_subscriber::{
+    fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt,
+};
 use typed_builder::TypedBuilder;
 
 /// Bootstrap is the entry point of the application.
@@ -75,20 +83,61 @@ impl Bootstrap {
     }
 
     pub fn initialize_logging(&self) -> Result<(), BootstrapError> {
-        if self.initialize_logging {
-            // init the default logging subscriber.
-            let subscriber =
-                tracing_subscriber::Registry::default().with(tracing_subscriber::fmt::layer());
-            if let Err(e) = subscriber.try_init() {
-                tracing::error!("unable to initialize tracing subscriber: {:?}", e);
-                return Err(BootstrapError::TracingSubscriberInitError(Box::new(e)));
+        if self.initialize_logging && self.base_modules.borrow().config.is_some() {
+            let logging_config =
+                LoggingConfig::new(&self.base_modules.borrow().config.as_ref().unwrap());
+            let Some(level) = logging_config.log_level().as_tracing_level() else {
+                return Err(BootstrapError::InvalidConfigValueError(format!(
+                    "logging.log_level={:?}",
+                    logging_config.log_level()
+                )));
+            };
+            // file layer
+            let builder = RollingFileAppenderBase::builder();
+            let file_appender = builder
+                .filename(logging_config.full_log_file_path())
+                .max_filecount(logging_config.log_file_max_count())
+                .condition_max_file_size(logging_config.log_file_max_size())
+                .condition_daily()
+                .build()
+                .unwrap();
+            let (non_blocking_file_writer, file_writer_guard) =
+                tracing_appender::non_blocking(file_appender);
+            let file_guard: WorkerGuard = file_writer_guard;
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(non_blocking_file_writer.with_max_level(level));
+
+            let mut stdout_guard: Option<WorkerGuard> = None;
+            // optional stdout layer
+            let stdout_layer = if logging_config.enable_console() {
+                let (non_blocking_stdout_writer, stdout_writer_guard) =
+                    tracing_appender::non_blocking(std::io::stdout());
+                stdout_guard = Some(stdout_writer_guard);
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(non_blocking_stdout_writer.with_max_level(level)),
+                )
             } else {
-                tracing::debug!("tracing subscriber initialized");
-            }
+                stdout_guard = None;
+                None
+            };
+            // hold log layer guard
+            let logger = Logger::new(file_guard, stdout_guard);
+            let _ = self
+                .base_modules
+                .borrow_mut()
+                .logger
+                .insert(Ref::new(logger));
+
+            return tracing_subscriber::registry()
+                .with(file_layer)
+                .with(stdout_layer)
+                .try_init()
+                .map_err(|e| BootstrapError::TracingSubscriberInitError(Box::new(e)));
         }
         Ok(())
     }
-
     pub fn show_config(&self) -> Result<(), BootstrapError> {
         if let Some(config) = &self.base_modules.borrow().config {
             let properties = config
@@ -129,11 +178,15 @@ pub trait Module {
 }
 pub struct BaseModule {
     config: Option<Ref<Config>>,
+    logger: Option<Ref<Logger>>,
 }
 
 impl Default for BaseModule {
     fn default() -> Self {
-        Self { config: None }
+        Self {
+            config: None,
+            logger: None,
+        }
     }
 }
 

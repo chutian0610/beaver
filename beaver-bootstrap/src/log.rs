@@ -1,17 +1,48 @@
-use std::{fmt, str::FromStr};
+use std::{env, fmt, path::PathBuf, str::FromStr, sync::LazyLock};
 
+use di::inject;
 use serde::{Deserialize, Deserializer, Serialize};
+use tracing_appender::non_blocking::WorkerGuard;
 
 use crate::config::{Config, ConfigPrefix};
+
+static DEFAULT_LOG_FOLDER: LazyLock<PathBuf> = LazyLock::new(|| {
+    let dir = match env::var("CARGO_MANIFEST_DIR") {
+        Ok(dir) => PathBuf::from(dir).join("logs"),
+        Err(_) => {
+            // get config path from current executable file path
+            let mut current_exe =
+                env::current_exe().expect("failed to get current executable file path");
+            current_exe.pop();
+            current_exe.push("logs");
+            current_exe
+        }
+    };
+    dir
+});
+
+pub struct Logger {
+    _file_guard: WorkerGuard,
+    _stdout_guard: Option<WorkerGuard>,
+}
+impl Logger {
+    pub fn new(file_guard: WorkerGuard, stdout_guard: Option<WorkerGuard>) -> Self {
+        Self {
+            _file_guard: file_guard,
+            _stdout_guard: stdout_guard,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LoggingConfig {
     log_level: Level,
     enable_console: bool,
-    enable_file: bool,
-    log_file_path: String,
+    log_file_path: Option<String>,
     log_file_max_size: u64,
-    log_file_max_age: u64,
+    log_file_max_count: usize,
+    log_file_name: Option<String>,
 }
 
 impl Default for LoggingConfig {
@@ -19,10 +50,10 @@ impl Default for LoggingConfig {
         Self {
             log_level: Level::default(),
             enable_console: true,
-            enable_file: true,
-            log_file_path: "".to_string(),
+            log_file_path: None,
             log_file_max_size: 0,
-            log_file_max_age: 0,
+            log_file_max_count: 0,
+            log_file_name: None,
         }
     }
 }
@@ -30,6 +61,40 @@ impl Default for LoggingConfig {
 impl LoggingConfig {
     pub fn new(config: &Config) -> Self {
         config.get().expect("failed to load LoggingConfig")
+    }
+
+    pub fn log_level(&self) -> Level {
+        self.log_level
+    }
+
+    pub fn enable_console(&self) -> bool {
+        self.enable_console
+    }
+
+    pub fn log_file_path(&self) -> &str {
+        self.log_file_path
+            .as_deref()
+            .unwrap_or_else(|| DEFAULT_LOG_FOLDER.as_path().to_str().unwrap())
+    }
+
+    pub fn full_log_file_path(&self) -> String {
+        let log_file_path = self.log_file_path();
+        if log_file_path.ends_with('/') {
+            format!("{}{}", log_file_path, self.log_file_name())
+        } else {
+            format!("{}/{}", log_file_path, self.log_file_name())
+        }
+    }
+
+    pub fn log_file_max_size(&self) -> u64 {
+        self.log_file_max_size
+    }
+
+    pub fn log_file_max_count(&self) -> usize {
+        self.log_file_max_count
+    }
+    pub fn log_file_name(&self) -> &str {
+        self.log_file_name.as_deref().unwrap_or("beaver.log")
     }
 }
 impl ConfigPrefix for LoggingConfig {
