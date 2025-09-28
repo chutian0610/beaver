@@ -108,7 +108,7 @@ impl Bootstrap {
                 .with_ansi(false)
                 .with_writer(non_blocking_file_writer.with_max_level(level));
 
-            let mut stdout_guard: Option<WorkerGuard> = None;
+            let stdout_guard: Option<WorkerGuard>;
             // optional stdout layer
             let stdout_layer = if logging_config.enable_console() {
                 let (non_blocking_stdout_writer, stdout_writer_guard) =
