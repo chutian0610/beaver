@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::{cell::RefCell, sync::RwLock};
 
 use crate::{
     config::Config,
@@ -44,16 +44,16 @@ pub struct Bootstrap {
     /// a collection of registered services.
     ///
     /// This field is initialized internally.
-    #[builder(default = ServiceCollection::new(), setter(skip))]
-    service_collection: ServiceCollection,
+    #[builder(default = RwLock::new(ServiceCollection::new()), setter(skip))]
+    service_collection: RwLock<ServiceCollection>,
 
     /// a collection of modules
     #[builder(default = vec![])]
     modules: Vec<Box<dyn Module>>,
 
     /// a collection of modules
-    #[builder(default = RefCell::new(BaseModule::default()))]
-    base_modules: RefCell<BaseModule>,
+    #[builder(default = RefCell::new(BootstrapBaseModule::default()))]
+    base_modules: RefCell<BootstrapBaseModule>,
 }
 
 impl Bootstrap {
@@ -160,7 +160,8 @@ impl Bootstrap {
 /// # Example
 /// ```
 /// use di::ServiceCollection;
-/// use beaver_bootstrap::module::Module;
+/// use beaver_bootstrap::bootstrap::Module;
+/// use std::sync::RwLock;
 /// use di::*;
 ///
 /// #[injectable]
@@ -168,20 +169,29 @@ impl Bootstrap {
 /// pub struct MyModule;
 ///
 /// impl Module for MyModule {
-///     fn configure(&self, binder: &mut ServiceCollection) {
-///         binder.add(A::singleton());
+///     fn configure(&self, binder: &RwLock<ServiceCollection>) {
+///         let mut service_collection = binder.write().unwrap();
+///         service_collection.add(A::singleton());
 ///     }
 /// }
 /// ```
 pub trait Module {
-    fn configure(&self, binder: &mut ServiceCollection);
+    /// Configures the module by adding services to the service collection.
+    ///
+    /// # Arguments
+    ///
+    /// * `binder` - The service collection to configure.
+    ///
+    /// # Note
+    /// binder is RwLock<ServiceCollection>, so it is thread safe.
+    fn configure(&self, binder: &RwLock<ServiceCollection>);
 }
-pub struct BaseModule {
+pub struct BootstrapBaseModule {
     config: Option<Ref<Config>>,
     logger: Option<Ref<Logger>>,
 }
 
-impl Default for BaseModule {
+impl Default for BootstrapBaseModule {
     fn default() -> Self {
         Self {
             config: None,
@@ -190,11 +200,12 @@ impl Default for BaseModule {
     }
 }
 
-impl Module for BaseModule {
-    fn configure(&self, binder: &mut ServiceCollection) {
+impl Module for BootstrapBaseModule {
+    fn configure(&self, binder: &RwLock<ServiceCollection>) {
         let config = self.config.clone();
         if let Some(config) = config {
-            binder.add(singleton_as_self::<Config>().from(move |_| config.clone()));
+            let mut service_collection = binder.write().unwrap();
+            service_collection.add(singleton_as_self::<Config>().from(move |_| config.clone()));
         }
     }
 }
