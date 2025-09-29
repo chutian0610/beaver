@@ -1,6 +1,5 @@
 use std::{env, fmt, path::PathBuf, str::FromStr, sync::LazyLock};
 
-use di::inject;
 use serde::{Deserialize, Deserializer, Serialize};
 use tracing_appender::non_blocking::WorkerGuard;
 
