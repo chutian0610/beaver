@@ -92,6 +92,11 @@ impl Bootstrap {
                     logging_config.log_level()
                 )));
             };
+            let _ = self
+                .base_modules
+                .borrow_mut()
+                .logging_config
+                .insert(Ref::new(logging_config.clone()));
             // file layer
             let builder = RollingFileAppenderBase::builder();
             let file_appender = builder
@@ -189,6 +194,7 @@ pub trait Module {
 pub struct BootstrapBaseModule {
     config: Option<Ref<Config>>,
     logger: Option<Ref<Logger>>,
+    logging_config: Option<Ref<LoggingConfig>>,
 }
 
 impl Default for BootstrapBaseModule {
@@ -196,16 +202,28 @@ impl Default for BootstrapBaseModule {
         Self {
             config: None,
             logger: None,
+            logging_config: None,
         }
     }
 }
 
 impl Module for BootstrapBaseModule {
     fn configure(&self, binder: &RwLock<ServiceCollection>) {
-        let config = self.config.clone();
-        if let Some(config) = config {
+        if self.config.is_some() {
+            let config = self.config.clone().unwrap();
             let mut service_collection = binder.write().unwrap();
             service_collection.add(singleton_as_self::<Config>().from(move |_| config.clone()));
+        }
+        if self.logging_config.is_some() {
+            let logging_config = self.logging_config.clone().unwrap();
+            let mut service_collection = binder.write().unwrap();
+            service_collection
+                .add(singleton_as_self::<LoggingConfig>().from(move |_| logging_config.clone()));
+        }
+        if self.logger.is_some() {
+            let logger = self.logger.clone().unwrap();
+            let mut service_collection = binder.write().unwrap();
+            service_collection.add(singleton_as_self::<Logger>().from(move |_| logger.clone()));
         }
     }
 }
