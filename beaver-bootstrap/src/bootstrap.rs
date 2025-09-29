@@ -191,7 +191,7 @@ pub trait Module {
     /// binder is RwLock<ServiceCollection>, so it is thread safe.
     fn configure(&self, binder: &RwLock<ServiceCollection>);
 }
-pub struct BootstrapBaseModule {
+struct BootstrapBaseModule {
     config: Option<Ref<Config>>,
     logger: Option<Ref<Logger>>,
     logging_config: Option<Ref<LoggingConfig>>,
