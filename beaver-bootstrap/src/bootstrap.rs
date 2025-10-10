@@ -6,7 +6,6 @@ use crate::{
     log::{Logger, LoggingConfig},
 };
 use di::{Ref, ServiceCollection, singleton_as_self};
-use tracing_appender::non_blocking::WorkerGuard;
 use tracing_rolling_file::RollingFileAppenderBase;
 use tracing_subscriber::{
     fmt::writer::MakeWriterExt, layer::SubscriberExt, util::SubscriberInitExt,
@@ -83,20 +82,34 @@ impl Bootstrap {
     }
 
     pub fn initialize_logging(&self) -> Result<(), BootstrapError> {
-        if self.initialize_logging && self.base_modules.borrow().config.is_some() {
-            let logging_config =
-                LoggingConfig::new(&self.base_modules.borrow().config.as_ref().unwrap());
+        if self.initialize_logging {
+            let config = match self.base_modules.borrow().config.clone() {
+                Some(config) => config,
+                None => return Ok(()), // if no config, just return
+            };
+
+            let logging_config = LoggingConfig::new(&config);
+
             let Some(level) = logging_config.log_level().as_tracing_level() else {
                 return Err(BootstrapError::InvalidConfigValueError(format!(
                     "logging.log_level={:?}",
                     logging_config.log_level()
                 )));
             };
-            let _ = self
-                .base_modules
-                .borrow_mut()
-                .logging_config
-                .insert(Ref::new(logging_config.clone()));
+
+            {
+                // limit the scope of borrow_mut
+                let mut base_modules = self.base_modules.borrow_mut();
+                let _ = base_modules
+                    .logging_config
+                    .insert(Ref::new(logging_config.clone()));
+            }
+
+            // ensure log directory exists
+            logging_config
+                .ensure_log_directory()
+                .map_err(|e| BootstrapError::LogDirectoryCreationError(Box::new(e)))?;
+
             // file layer
             let builder = RollingFileAppenderBase::builder();
             let file_appender = builder
@@ -105,41 +118,39 @@ impl Bootstrap {
                 .condition_max_file_size(logging_config.log_file_max_size())
                 .condition_daily()
                 .build()
-                .unwrap();
+                .map_err(|e| BootstrapError::LogFileCreationError(Box::new(e)))?;
+
             let (non_blocking_file_writer, file_writer_guard) =
                 tracing_appender::non_blocking(file_appender);
-            let file_guard: WorkerGuard = file_writer_guard;
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(non_blocking_file_writer.with_max_level(level));
 
-            let stdout_guard: Option<WorkerGuard>;
             // optional stdout layer
-            let stdout_layer = if logging_config.enable_console() {
+            let (stdout_layer, stdout_guard) = if logging_config.enable_console() {
                 let (non_blocking_stdout_writer, stdout_writer_guard) =
                     tracing_appender::non_blocking(std::io::stdout());
-                stdout_guard = Some(stdout_writer_guard);
-                Some(
-                    tracing_subscriber::fmt::layer()
-                        .with_writer(non_blocking_stdout_writer.with_max_level(level)),
-                )
+                let layer = tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking_stdout_writer.with_max_level(level));
+                (Some(layer), Some(stdout_writer_guard))
             } else {
-                stdout_guard = None;
-                None
+                (None, None)
             };
-            // hold log layer guard
-            let logger = Logger::new(file_guard, stdout_guard);
-            let _ = self
-                .base_modules
-                .borrow_mut()
-                .logger
-                .insert(Ref::new(logger));
 
-            return tracing_subscriber::registry()
+            // save logger to keep guards active
+            {
+                // limit the scope of borrow_mut
+                let mut base_modules = self.base_modules.borrow_mut();
+                let logger = Logger::new(file_writer_guard, stdout_guard);
+                let _ = base_modules.logger.insert(Ref::new(logger));
+            }
+
+            // initialize subscriber
+            tracing_subscriber::registry()
                 .with(file_layer)
                 .with(stdout_layer)
                 .try_init()
-                .map_err(|e| BootstrapError::TracingSubscriberInitError(Box::new(e)));
+                .map_err(|e| BootstrapError::TracingSubscriberInitError(Box::new(e)))?;
         }
         Ok(())
     }
@@ -209,21 +220,29 @@ impl Default for BootstrapBaseModule {
 
 impl Module for BootstrapBaseModule {
     fn configure(&self, binder: &RwLock<ServiceCollection>) {
-        if self.config.is_some() {
-            let config = self.config.clone().unwrap();
-            let mut service_collection = binder.write().unwrap();
-            service_collection.add(singleton_as_self::<Config>().from(move |_| config.clone()));
-        }
-        if self.logging_config.is_some() {
-            let logging_config = self.logging_config.clone().unwrap();
-            let mut service_collection = binder.write().unwrap();
-            service_collection
-                .add(singleton_as_self::<LoggingConfig>().from(move |_| logging_config.clone()));
-        }
-        if self.logger.is_some() {
-            let logger = self.logger.clone().unwrap();
-            let mut service_collection = binder.write().unwrap();
-            service_collection.add(singleton_as_self::<Logger>().from(move |_| logger.clone()));
+        // register base services
+        self.register_service::<Config>(&self.config, binder);
+        self.register_service::<LoggingConfig>(&self.logging_config, binder);
+        self.register_service::<Logger>(&self.logger, binder);
+    }
+}
+
+impl BootstrapBaseModule {
+    /// register a service to the service collection.
+    ///
+    /// # Arguments
+    ///
+    /// * `service` - The service to register.
+    /// * `binder` - The service collection to configure.
+    fn register_service<T: Send + Sync + 'static>(
+        &self,
+        service: &Option<Ref<T>>,
+        binder: &RwLock<ServiceCollection>,
+    ) {
+        if let Some(svc) = service.clone() {
+            if let Ok(mut service_collection) = binder.write() {
+                service_collection.add(singleton_as_self::<T>().from(move |_| svc.clone()));
+            }
         }
     }
 }

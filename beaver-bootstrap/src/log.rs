@@ -10,16 +10,20 @@ static DEFAULT_LOG_FOLDER: LazyLock<PathBuf> = LazyLock::new(|| {
         Ok(dir) => PathBuf::from(dir).join("logs"),
         Err(_) => {
             // get config path from current executable file path
-            let mut current_exe =
-                env::current_exe().expect("failed to get current executable file path");
-            current_exe.pop();
-            current_exe.push("logs");
-            current_exe
+            if let Ok(mut current_exe) = env::current_exe() {
+                current_exe.pop();
+                current_exe.push("logs");
+                current_exe
+            } else {
+                // fallback to current directory
+                PathBuf::from("./logs")
+            }
         }
     };
     dir
 });
 
+#[derive(Debug)]
 pub struct Logger {
     _file_guard: WorkerGuard,
     _stdout_guard: Option<WorkerGuard>,
@@ -71,18 +75,35 @@ impl LoggingConfig {
     }
 
     pub fn log_file_path(&self) -> &str {
-        self.log_file_path
-            .as_deref()
-            .unwrap_or_else(|| DEFAULT_LOG_FOLDER.as_path().to_str().unwrap())
+        match &self.log_file_path {
+            Some(path) => path.as_str(),
+            None => DEFAULT_LOG_FOLDER
+                .as_path()
+                .to_str()
+                .unwrap_or_else(|| "./logs"),
+        }
     }
 
     pub fn full_log_file_path(&self) -> String {
         let log_file_path = self.log_file_path();
-        if log_file_path.ends_with('/') {
-            format!("{}{}", log_file_path, self.log_file_name())
-        } else {
-            format!("{}/{}", log_file_path, self.log_file_name())
+        let log_file_name = self.log_file_name();
+
+        PathBuf::from(&log_file_path)
+            .join(log_file_name)
+            .to_str()
+            .map(String::from)
+            .unwrap_or_else(|| format!("{}/{}", log_file_path, log_file_name))
+    }
+
+    /// make sure log directory exists, if not, create it
+    pub fn ensure_log_directory(&self) -> std::io::Result<()> {
+        let log_path = self.log_file_path();
+        let log_dir = PathBuf::from(log_path);
+
+        if !log_dir.exists() {
+            std::fs::create_dir_all(&log_dir)?;
         }
+        Ok(())
     }
 
     pub fn log_file_max_size(&self) -> u64 {
