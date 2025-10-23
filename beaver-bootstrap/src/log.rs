@@ -1,9 +1,20 @@
-use std::{env, fmt, path::PathBuf, str::FromStr, sync::LazyLock};
+use std::{
+    collections::HashSet,
+    env,
+    fmt::{self},
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::LazyLock,
+};
 
 use serde::{Deserialize, Deserializer, Serialize};
 use tracing_appender::non_blocking::WorkerGuard;
 
-use crate::config::{Config, ConfigPrefix};
+use crate::{
+    config::{Config, ConfigPrefix},
+    error::BootstrapError,
+    serde::non_empty,
+};
 
 static DEFAULT_LOG_FOLDER: LazyLock<PathBuf> = LazyLock::new(|| {
     let dir = match env::var("CARGO_MANIFEST_DIR") {
@@ -24,80 +35,173 @@ static DEFAULT_LOG_FOLDER: LazyLock<PathBuf> = LazyLock::new(|| {
 });
 
 #[derive(Debug)]
-pub struct Logger {
-    _file_guard: WorkerGuard,
-    _stdout_guard: Option<WorkerGuard>,
+pub struct AppenderGuard {
+    _guards: Vec<WorkerGuard>,
 }
-impl Logger {
-    pub fn new(file_guard: WorkerGuard, stdout_guard: Option<WorkerGuard>) -> Self {
-        Self {
-            _file_guard: file_guard,
-            _stdout_guard: stdout_guard,
-        }
+impl AppenderGuard {
+    pub fn new(guards: Vec<WorkerGuard>) -> Self {
+        let mut _guards = Vec::new();
+        _guards.extend(guards);
+        Self { _guards }
     }
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, Hash, PartialEq)]
 #[serde(default, deny_unknown_fields)]
-pub struct LoggingConfig {
-    log_level: Level,
-    enable_console: bool,
-    log_file_path: Option<String>,
-    log_file_max_size: u64,
-    log_file_max_count: usize,
-    log_file_name: Option<String>,
+pub struct Logger {
+    #[serde(deserialize_with = "non_empty")]
+    target: String,
+    level: Level,
+    #[serde(deserialize_with = "non_empty")]
+    name: String,
 }
 
-impl Default for LoggingConfig {
-    fn default() -> Self {
+impl Logger {
+    pub fn new(name: &str, level: &Level, target: &str) -> Self {
         Self {
-            log_level: Level::default(),
-            enable_console: true,
-            log_file_path: None,
-            log_file_max_size: 0,
-            log_file_max_count: 0,
-            log_file_name: None,
+            target: target.to_owned(),
+            level: level.to_owned(),
+            name: name.to_owned(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name.as_str()
+    }
+    pub fn target(&self) -> &str {
+        &self.target.as_str()
+    }
+
+    pub fn level(&self) -> &Level {
+        &self.level
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct AllLoggerSerde {
+    loggers: Vec<Logger>,
+    default_level: Level,
+    #[serde(deserialize_with = "non_empty")]
+    default_name: String,
+}
+impl From<AllLoggerSerde> for AllLogger {
+    fn from(value: AllLoggerSerde) -> AllLogger {
+        let mut all_logger: Vec<Logger> = Vec::new();
+        value
+            .loggers
+            .iter()
+            .for_each(|x| all_logger.push(x.to_owned()));
+        all_logger.push(Logger {
+            target: "".to_string(),
+            level: value.default_level,
+            name: value.default_name,
+        });
+        AllLogger {
+            loggers: all_logger,
         }
     }
 }
 
-impl LoggingConfig {
-    pub fn new(config: &Config) -> Self {
-        config.get().expect("failed to load LoggingConfig")
-    }
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields, from = "AllLoggerSerde")]
+pub struct AllLogger {
+    loggers: Vec<Logger>,
+}
 
-    pub fn log_level(&self) -> Level {
-        self.log_level
+impl AllLogger {
+    pub fn loggers(&self) -> Vec<&Logger> {
+        self.loggers.iter().collect()
     }
+}
 
-    pub fn enable_console(&self) -> bool {
-        self.enable_console
-    }
-
-    pub fn log_file_path(&self) -> &str {
-        match &self.log_file_path {
-            Some(path) => path.as_str(),
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FileAppenderConfigSerde {
+    enable: bool,
+    write_level: Option<Level>,
+    file_dir: Option<String>,
+    file_max_size: u64,
+    file_max_count: usize,
+    file_name: String,
+    logger_names: Vec<String>,
+}
+impl From<FileAppenderConfigSerde> for FileAppenderConfig {
+    fn from(value: FileAppenderConfigSerde) -> FileAppenderConfig {
+        // get log file directory, if not set, use default log folder
+        let log_file_dir = match value.file_dir {
+            Some(path) => path,
             None => DEFAULT_LOG_FOLDER
                 .as_path()
                 .to_str()
-                .unwrap_or_else(|| "./logs"),
+                .map(String::from)
+                .unwrap_or_else(|| "./logs".to_string()),
+        };
+        let log_level = match value.write_level {
+            Some(level) => level,
+            None => Level::Info,
+        };
+        // get full log file path
+        let full_file_path: PathBuf = PathBuf::from(&log_file_dir).join(&value.file_name);
+        FileAppenderConfig {
+            enable: value.enable,
+            write_level: log_level,
+            file_dir: log_file_dir,
+            file_max_size: value.file_max_size,
+            file_max_count: value.file_max_count,
+            file_name: value.file_name,
+            file_path: full_file_path,
+            logger_names: value.logger_names,
         }
     }
+}
 
-    pub fn full_log_file_path(&self) -> String {
-        let log_file_path = self.log_file_path();
-        let log_file_name = self.log_file_name();
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields, from = "FileAppenderConfigSerde")]
+pub struct FileAppenderConfig {
+    enable: bool,
+    write_level: Level,
+    file_dir: String,
+    file_path: PathBuf,
+    file_max_size: u64,
+    file_max_count: usize,
+    file_name: String,
+    logger_names: Vec<String>,
+}
 
-        PathBuf::from(&log_file_path)
-            .join(log_file_name)
-            .to_str()
-            .map(String::from)
-            .unwrap_or_else(|| format!("{}/{}", log_file_path, log_file_name))
+impl FileAppenderConfig {
+    pub fn write_level(&self) -> Level {
+        self.write_level
+    }
+
+    pub fn enable(&self) -> bool {
+        self.enable
+    }
+
+    pub fn file_dir(&self) -> &str {
+        self.file_dir.as_str()
+    }
+
+    pub fn file_path(&self) -> &Path {
+        self.file_path.as_path()
+    }
+
+    pub fn file_max_size(&self) -> u64 {
+        self.file_max_size
+    }
+
+    pub fn file_max_count(&self) -> usize {
+        self.file_max_count
+    }
+    pub fn file_name(&self) -> &str {
+        &self.file_name.as_str()
+    }
+
+    pub fn logger_names(&self) -> Vec<&str> {
+        self.logger_names.iter().map(|x| x.as_str()).collect()
     }
 
     /// make sure log directory exists, if not, create it
     pub fn ensure_log_directory(&self) -> std::io::Result<()> {
-        let log_path = self.log_file_path();
+        let log_path = self.file_dir();
         let log_dir = PathBuf::from(log_path);
 
         if !log_dir.exists() {
@@ -105,23 +209,145 @@ impl LoggingConfig {
         }
         Ok(())
     }
+}
 
-    pub fn log_file_max_size(&self) -> u64 {
-        self.log_file_max_size
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConsoleAppenderConfig {
+    enable: bool,
+    write_level: Level,
+    logger_names: Vec<String>,
+}
+
+impl ConsoleAppenderConfig {
+    pub fn write_level(&self) -> Level {
+        self.write_level
     }
 
-    pub fn log_file_max_count(&self) -> usize {
-        self.log_file_max_count
+    pub fn enable(&self) -> bool {
+        self.enable
     }
-    pub fn log_file_name(&self) -> &str {
-        self.log_file_name.as_deref().unwrap_or("beaver.log")
+
+    pub fn logger_names(&self) -> Vec<&str> {
+        self.logger_names.iter().map(|x| x.as_str()).collect()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct LoggingConfig {
+    all_logger: AllLogger,
+    file_appenders: Vec<FileAppenderConfig>,
+    console_appender: Option<ConsoleAppenderConfig>,
+}
+
+impl LoggingConfig {
+    pub fn new(config: &Config) -> Result<Self, BootstrapError> {
+        let logging_config = config
+            .get::<LoggingConfig>()
+            .map_err(|e| BootstrapError::LoggingConfigLoadError(e))?;
+        // validate logging config
+        logging_config.validate()?;
+        Ok(logging_config)
+    }
+
+    pub fn logger_config(&self) -> &AllLogger {
+        &self.all_logger
+    }
+
+    pub fn file_appender_config(&self) -> Vec<&FileAppenderConfig> {
+        self.file_appenders
+            .iter()
+            .collect::<Vec<&FileAppenderConfig>>()
+    }
+
+    pub fn console_appender_config(&self) -> Option<&ConsoleAppenderConfig> {
+        self.console_appender.as_ref()
+    }
+
+    fn all_logger_name(&self) -> Vec<&str> {
+        self.logger_config()
+            .loggers
+            .iter()
+            .map(|x| x.name.as_str())
+            .collect()
+    }
+
+    fn validate_loggers(&self) -> Result<(), BootstrapError> {
+        let logger_config = self.logger_config();
+        let all_loggers = &logger_config.loggers;
+
+        let mut set: HashSet<&Logger> = HashSet::new();
+
+        for logger in all_loggers {
+            if !set.insert(logger) {
+                return Err(BootstrapError::DuplicateLoggerError(format!(
+                    "{:?}",
+                    logger
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_file_appender(&self) -> Result<(), BootstrapError> {
+        let all_logger_name = self.all_logger_name();
+        let all_logger_name_set: HashSet<&str> = all_logger_name.iter().cloned().collect();
+        let file_appender_config = self.file_appender_config();
+        let mut path_set: HashSet<&Path> = HashSet::new();
+        for config in file_appender_config {
+            config
+                .ensure_log_directory()
+                .map_err(|e| BootstrapError::LogDirectoryCreationError(Box::new(e)))?;
+            // check log file path duplication
+            let log_file_path: &Path = config.file_path();
+            if !path_set.insert(log_file_path) {
+                return Err(BootstrapError::DuplicateLogFilePathError(
+                    log_file_path.to_str().unwrap_or("").to_string(),
+                ));
+            }
+            let loggers = config.logger_names();
+            for logger in loggers {
+                if !all_logger_name_set.contains(logger) {
+                    return Err(BootstrapError::InvalidConfigValueError(format!(
+                        "wrong logger name {} in appender{:#?}",
+                        logger, config
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+    fn validate_console_appender(&self) -> Result<(), BootstrapError> {
+        let all_logger_name = self.all_logger_name();
+        let all_logger_name_set: HashSet<&str> = all_logger_name.iter().cloned().collect();
+        let Some(config) = &self.console_appender else {
+            return Ok(());
+        };
+        let loggers = config.logger_names();
+        for logger in loggers {
+            if !all_logger_name_set.contains(logger) {
+                return Err(BootstrapError::InvalidConfigValueError(format!(
+                    "wrong logger name {} in console appender",
+                    logger
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn validate(&self) -> Result<(), BootstrapError> {
+        self.validate_loggers()?;
+        self.validate_file_appender()?;
+        self.validate_console_appender()?;
+        Ok(())
     }
 }
 impl ConfigPrefix for LoggingConfig {
     const PREFIX: &'static str = "logging";
 }
 
-#[derive(Debug, Default, Copy, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, Serialize, PartialEq, Eq, Hash)]
 pub enum Level {
     /// The "trace" level.
     Trace,

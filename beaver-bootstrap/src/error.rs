@@ -11,8 +11,16 @@ pub enum BootstrapError {
     ConfigShowError(ConfigError),
     #[error("invalid config value: {0}")]
     InvalidConfigValueError(String),
+    #[error("missing config value: {0}")]
+    MissingConfigValueError(String),
+    #[error("unable to load logging config: {0}")]
+    LoggingConfigLoadError(ConfigError),
     #[error("unable to create log directory: {0}")]
     LogDirectoryCreationError(Box<dyn std::error::Error>),
     #[error("unable to create log file: {0}")]
     LogFileCreationError(Box<&'static str>),
+    #[error("duplicate logger: {0}")]
+    DuplicateLoggerError(String),
+    #[error("duplicate log file path: {0}")]
+    DuplicateLogFilePathError(String),
 }
